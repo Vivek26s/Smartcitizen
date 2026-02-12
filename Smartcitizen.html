@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartCitizen - Community Issue Reporting Platform</title>
+    <!-- Leaflet CSS for Maps (Open Source, No API Key Needed) -->
+    <link rel="stylesheet" href="A.css" />
+</head>
+<body>
+    <header>
+        <h1> SmartCitizen</h1>
+        <p>A Community Issue Reporting Platform</p>
+    </header>
+
+    <nav>
+        <button onclick="showSection('login')">Login</button>
+        <button onclick="showSection('register')">Register</button>
+        <button onclick="showSection('report')">Report Issue</button>
+        <button onclick="showSection('dashboard')">Dashboard</button>
+        <button onclick="showSection('admin')">Admin Panel</button>
+        <button id="logoutBtn" onclick="logout()" class="hidden">Logout</button>
+    </nav>
+
+    <div class="container">
+        <!-- Login Section -->
+        <div id="login" class="section">
+            <h2>Login</h2>
+            <form onsubmit="login(event)">
+                <input type="email" id="loginEmail" placeholder="Email" required>
+                <input type="password" id="loginPassword" placeholder="Password" required>
+                <select id="role">
+                    <option value="citizen">Citizen</option>
+                    <option value="admin">Admin</option>
+                </select>
+                <button type="submit">Login</button>
+            </form>
+            <p id="loginError" style="color: red;"></p>
+        </div>
+
+        <!-- Register Section -->
+        <div id="register" class="section hidden">
+            <h2>Register</h2>
+            <form onsubmit="register(event)">
+                <input type="text" id="regName" placeholder="Name" required>
+                <input type="email" id="regEmail" placeholder="Email" required>
+                <input type="password" id="regPassword" placeholder="Password" required>
+                <select id="regRole">
+                    <option value="citizen">Citizen</option>
+                    <option value="admin">Admin</option>
+                </select>
+                <button type="submit">Register</button>
+            </form>
+            <p id="regError" style="color: red;"></p>
+        </div>
+
+        <!-- Report Issue Section -->
+        <div id="report" class="section hidden">
+            <h2>Report an Issue</h2>
+            <form onsubmit="reportIssue(event)">
+                <select id="category" required>
+                    <option value="">Select Category</option>
+                    <option value="Garbage">Garbage</option>
+                    <option value="Road">Road</option>
+                    <option value="Water">Water</option>
+                    <option value="Streetlight">Streetlight</option>
+                </select>
+                <input type="file" id="image" accept="image/*" required>
+                <textarea id="description" placeholder="Describe the problem" required></textarea>
+                <input type="text" id="location" placeholder="Enter location (e.g., address)" required>
+                <div id="map"></div>
+                <button type="submit">Submit Report</button>
+            </form>
+            <p id="reportError" style="color: red;"></p>
+        </div>
+
+        <!-- Dashboard Section -->
+        <div id="dashboard" class="section hidden">
+            <h2>Issue Dashboard</h2>
+            <select id="filterCategory" onchange="filterIssues()">
+                <option value="">All Categories</option>
+                <option value="Garbage">Garbage</option>
+                <option value="Road">Road</option>
+                <option value="Water">Water</option>
+                <option value="Streetlight">Streetlight</option>
+            </select>
+            <select id="filterStatus" onchange="filterIssues()">
+                <option value="">All Status</option>
+                <option value="Pending">Pending</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Resolved">Resolved</option>
+            </select>
+            <div id="issueMap" style="height: 400px; margin: 20px 0;"></div>
+            <div id="issuesList" class="issue-list"></div>
+        </div>
+
+        <!-- Admin Panel Section -->
+        <div id="admin" class="section hidden">
+            <h2>Admin Panel</h2>
+            <div id="adminIssuesList" class="issue-list"></div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS for Maps -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // JavaScript Code (Frontend Logic with Mock API/Database using localStorage)
+        let currentUser  = null;
+        let issues = JSON.parse(localStorage.getItem('issues')) || [];
+        let map, issueMap;
+        let markers = []; // For dashboard map markers
+
+        // Initialize maps on load
+        window.onload = function() {
+            // Report map (for selecting location)
+            map = L.map('map').setView([51.505, -0.09], 13); // Default view (London)
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(map);
+
+            // Dashboard map
+            issueMap = L.map('issueMap').setView([51.505, -0.09], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap contributors'
+            }).addTo(issueMap);
+
+            showSection('login');
+            loadUsers(); // Mock users if none
+        };
+
+        // Show/Hide Sections
+        function showSection(sectionId) {
+            document.querySelectorAll('.section').forEach(sec => sec.classList.add('hidden'));
+            document.getElementById(sectionId).classList.remove('hidden');
+            if (sectionId === 'dashboard' || sectionId === 'admin') {
+                renderIssues();
+            }
+            if (sectionId === 'report') {
+                map.invalidateSize(); // Refresh map
+            }
+            updateNav();
+        }
+
+        function updateNav() {
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (currentUser ) {
+                logoutBtn.classList.remove('hidden');
+                document.querySelectorAll('button:not(#logoutBtn)').forEach(btn => {
+                    if (btn.textContent.includes('Login') || btn.textContent.includes('Register')) {
+                        btn.style.display = 'none';
+                    }
+                });
+            } else {
+                logoutBtn.classList.add('hidden');
+                document.querySelectorAll('button:not(#logoutBtn)').forEach(btn => {
+                    if (btn.textContent.includes('Login') || btn.textContent.includes('Register')) {
+                        btn.style.display = 'inline-block';
+                    }
+                });
+            }
+            // Hide admin for citizens
+            if (currentUser  && currentUser .role === 'citizen') {
+                document.querySelector('button[onclick="showSection(\'admin\')"]').style.display = 'none';
+            } else {
+                document.querySelector('button[onclick="showSection(\'admin\')"]').style.display = 'inline-block';
+            }
+        }
+
+        // Mock Users (stored in localStorage)
+        let users = JSON.parse(localStorage.getItem('users')) || [
+            { email: 'admin@example.com', password: 'admin123', role: 'admin', name: 'Admin User' },
+            { email: 'citizen@example.com', password: 'citizen123', role: 'citizen', name: 'Citizen User' }
+        ];
+
+        function saveUsers() {
+            localStorage.setItem('users', JSON.stringify(users));
+        }
+
+        function loadUsers() {
+            if (!localStorage.getItem('users')) {
+                saveUsers();
+            }
+        }
+
+        // Register
+        function register(event) {
+            event.preventDefault();
+            const name = document.getElementById('regName').value;
+            const email = document.getElementById('regEmail').value;
+            const password = document.getElementById('regPassword').value;
+            const role = document.getElementById('regRole').value;
+
+            if (users.find(u => u.email === email)) {
+                document.getElementById('regError').textContent = 'Email already registered!';
+                return;
+            }
+
+            users.push({ email, password, role, name });
+            saveUsers();
+            alert('Registered successfully! Please login.');
+            showSection('login');
+        }
+
+        // Login (Simple Auth - No OTP, for prototype)
+        function login(event) {
+            event.preventDefault();
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            const role = document.getElementById('role').value;
+
+            const user = users.find(u => u.email === email && u.password === password && u.role === role);
+            if (user) {
+                currentUser  = user;
+                alert('Login successful!');
+                showSection('dashboard');
+            } else {
+                document.getElementById('loginError').textContent = 'Invalid credentials!';
+            }
+        }
+
+        function logout() {
+            currentUser  = null;
+            showSection('login');
+            updateNav();
+        }
+
+        // Report Issue
+        function reportIssue(event) {
+            event.preventDefault();
+            if (!currentUser ) return alert('Please login first!');
+
+            const category = document.getElementById('category').value;
+            const imageFile = document.getElementById('image').files[0];
+            const description = document.getElementById('description').value;
+            const location = document.getElementById('location').value;
+
+            // Mock location coords (in real app, use Geocoding API)
+            const lat = 51.505; // Placeholder
+            const lng = -0.09;
+
+            // Handle image (convert to base64 for storage)
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const issue = {
+                    id: Date.now(),
+                    reporter: currentUser .email,
+                    category,
+                    image: e.target.result, // Base64
+                    description,
+                    location,
+                    lat,
+                    lng,
+                    status: 'Pending',
+                    comments: [],
+                    upvotes: 0,
+                    timestamp: new Date().toISOString()
+                };
+                issues.push(issue);
+                localStorage.setItem('issues', JSON.stringify(issues));
+                alert('Issue reported successfully!');
+                event.target.reset();
+                map.setView([lat, lng], 13); // Center map on location
+            };
+            if (imageFile) {
+                reader.readAsDataURL(imageFile);
+            } else {
+                // No image, add without
+                reader.onload({ target: { result: '' } });
+            }
+        }
+
+        // Render Issues (for Dashboard and Admin)
+        function renderIssues(containerId = 'issuesList', isAdmin = false) {
+            const container = document.getElementById(containerId);
+            const filteredIssues = filterIssuesData(); // Apply filters
+            container.innerHTML = '';
+
+            // Clear map markers
+            markers.forEach(marker => issueMap.removeLayer(marker));
+            markers = [];
+
+            filteredIssues.forEach(issue => {
+                const card = document.createElement('div');
+                card.className = 'issue-card';
+                card.innerHTML = `
+                    <h3>${issue.category} - ${issue.status}</h3>
+                    <img src="${issue.image || ''}" alt="Issue Image" style="${!issue.image ? 'display:none;' : ''}">
+                    <p>${issue.description}</p>
+                    <p>Location: ${issue.location}</p>
+                    <span class="status ${issue.status.toLowerCase().replace(' ', '-')}">${issue.status}</span>
+                    <div class="comments">
+                        <strong>Comments:</strong> ${issue.comments.join('<br>') || 'None'}
+                    </div>
+                    <button class="upvote-btn" onclick="upvote(${issue.id})">Upvote (${issue.upvotes})</button>
+                    ${isAdmin ? `
+                        <select onchange="updateStatus(${issue.id}, this.value)">
+                            <option value="Pending" ${issue.status === 'Pending' ? 'selected' : ''}>Pending</option>
+                            <option value="In Progress" ${issue.status === 'In Progress' ? 'selected' : ''}>In Progress</option>
+                            <option value="Resolved" ${issue.status === 'Resolved' ? 'selected' : ''}>Resolved</option>
+                        </select>
+                        <input type="text" id="comment-${issue.id}" placeholder="Add comment">
+                        <button onclick="addComment(${issue.id})">Add Comment</button>
+                    ` : ''}
+                    ${currentUser  && currentUser .role === 'citizen' ? `
+                        <button onclick="confirmResolved(${issue.id})" ${issue.status !== 'Resolved' ? 'disabled' : ''}>Confirm Resolved</button>
+                    ` : ''}
+                `;
+                container.appendChild(card);
+
+                // Add marker to dashboard map
+                if (containerId === 'issuesList') {
+                    const marker = L.marker([issue.lat, issue.lng]).addTo(issueMap)
+                        .bindPopup(`<b>${issue.category}</b><br>${issue.description}`);
+                    markers.push(marker);
+                }
+            });
+
+            if (isAdmin) {
+                document.getElementById('adminIssuesList').innerHTML = container.innerHTML; // Sync admin
+            }
+        }
+
+        // Filters
+        let currentFilterCategory = '';
+        let currentFilterStatus = '';
+
+        function filterIssues() {
+            currentFilterCategory = document.getElementById('filterCategory').value;
+            currentFilterStatus = document.getElementById('filterStatus').value;
+            renderIssues();
+        }
+
+        function filterIssuesData() {
+            return issues.filter(issue => {
+                return (!currentFilterCategory || issue.category === currentFilterCategory) &&
+                       (!currentFilterStatus || issue.status === currentFilterStatus);
+            });
+        }
+
+        // Upvote
+        function upvote(issueId) {
+            const issue = issues.find(i => i.id === issueId);
+            if (issue) {
+                issue.upvotes++;
+                localStorage.setItem('issues', JSON.stringify(issues));
+                renderIssues();
+            }
+        }
+
+        // Update Status (Admin Only)
+        function updateStatus(issueId, status) {
+            const issue = issues.find(i => i.id === issueId);
+            if (issue && currentUser  && currentUser .role === 'admin') {
+                issue.status = status;
+                // Mock notification
+                if (issue.reporter !== currentUser .email) {
+                    alert(`Status updated to ${status} for reporter: ${issue.reporter}`);
+                }
+                localStorage.setItem('issues', JSON.stringify(issues));
+                renderIssues();
+                if (document.getElementById('admin')) renderIssues('adminIssuesList', true);
+            }
+        }
+
+        // Add Comment (Admin Only)
+        function addComment(issueId) {
+            const input = document.getElementById(`comment-${issueId}`);
+            if (input.value && currentUser  && currentUser .role === 'admin') {
+                const issue = issues.find(i => i.id === issueId);
+                if (issue) {
+                    issue.comments.push(`${currentUser .name}: ${input.value}`);
+                    input.value = '';
+                    localStorage.setItem('issues', JSON.stringify(issues));
+                    renderIssues();
+                    if (document.getElementById('admin')) renderIssues('adminIssuesList', true);
+                }
+            }
+        }
+
+        // Confirm Resolved (Citizen - Multiple confirmations for "Resolved")
+        function confirmResolved(issueId) {
+            const issue = issues.find(i => i.id === issueId);
+            if (issue && issue.status === 'Resolved' && currentUser ) {
+                // Simulate multiple confirmations (e.g., if upvotes > 5, fully resolved)
+                if (issue.upvotes >= 3) { // Arbitrary threshold
+                    alert('Issue confirmed as resolved by citizens!');
+                } else {
+                    alert('More confirmations needed to fully resolve this issue.');
+                }
+            }
+        }
+    </script>
+</body>
+</html>
